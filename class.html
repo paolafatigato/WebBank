@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Classe 1A - SchoolLedger</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>Classe <span id="classTitle">1A</span></h1>
+        <p>Elenco studenti — doppio clic su riga per aprire pagina studente</p>
+      </div>
+      <div style="margin-left:auto" class="small"><a href="index.html">← Torna home</a></div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <button class="btn" id="addCol">+ Nuova colonna</button>
+        <button class="btn secondary" id="bulkBtn">Bulk add (stesso importo)</button>
+        <input id="filter" class="input" placeholder="Cerca per nome o ID">
+        <button class="btn ghost" id="newStudent">+ Nuovo studente</button>
+      </div>
+
+      <div class="table-wrap">
+        <table id="classTable">
+          <thead>
+            <tr>
+              <th class="sticky">ID</th>
+              <th class="sticky">Nome</th>
+              <th class="sticky right">Saldo</th>
+              <!-- colonne transazioni dinamiche -->
+            </tr>
+          </thead>
+          <tbody id="classBody"></tbody>
+        </table>
+      </div>
+
+      <div id="status" class="status"></div>
+      <div class="student-panel small">
+        <strong>Nota:</strong> doppio clic su una riga per aprire la pagina studente. Puoi modificare le celle direttamente; i dati sono salvati localmente.
+      </div>
+    </div>
+  </div>
+
+<script src="script.js"></script>
+<script>
+  // class page logic
+  const params = new URLSearchParams(window.location.search);
+  const classId = params.get('c') || '1A';
+  document.getElementById('classTitle').textContent = classId;
+
+  function renderClass(){
+    const db = loadDB();
+    const cls = db.classes[classId];
+    if(!cls) {
+      showStatusClass('Classe non trovata', 'err'); return;
+    }
+    const tableHead = document.querySelector('#classTable thead tr');
+    // remove old dynamic ths after first 3
+    while(tableHead.cells.length > 3) tableHead.deleteCell(3);
+    cls.cols.forEach((col, idx)=>{
+      const th = document.createElement('th');
+      th.textContent = col.label || `C${idx+1}`;
+      th.className = 'right';
+      tableHead.appendChild(th);
+    });
+
+    const tbody = document.getElementById('classBody');
+    tbody.innerHTML = '';
+    cls.students.forEach((s, r)=>{
+      const tr = document.createElement('tr');
+      // id
+      const tdId = document.createElement('td');
+      tdId.className = 'sticky';
+      tdId.contentEditable = 'true';
+      tdId.textContent = s.id;
+      tdId.addEventListener('input', ()=> { s.id = tdId.textContent.trim(); saveDB(db); });
+      tr.appendChild(tdId);
+      // name
+// sostituisci la parte che crea tdName con questa versione
+const tdName = document.createElement('td');
+tdName.className = 'sticky';
+
+// crea link alla pagina student.html?id=...
+const a = document.createElement('a');
+a.href = 'student.html?id=' + encodeURIComponent(s.id) + '&c=' + encodeURIComponent(classId);
+a.textContent = s.name;
+a.style.color = 'var(--accent-dark)';
+a.style.textDecoration = 'none';
+a.addEventListener('click', (ev)=>{
+  // salva eventuali modifiche prima di navigare
+  saveDB(loadDB());
+});
+tdName.appendChild(a);
+
+// rendi comunque modificabile il nome (se preferisci edit inline): doppio click sul link apre la pagina
+// se vuoi modificare inline invece del link, puoi lasciare contentEditable o aggiungere un pulsante di modifica
+
+tr.appendChild(tdName);
+
+      // balance
+      const tdBal = document.createElement('td');
+      tdBal.className = 'right sticky';
+      tdBal.textContent = '€' + sumArray(s.transactions).toFixed(2);
+      tr.appendChild(tdBal);
+
+      // transaction cells
+      cls.cols.forEach((col, ci)=>{
+        const td = document.createElement('td');
+        td.contentEditable = 'true';
+        const v = s.transactions && s.transactions[ci] !== undefined ? s.transactions[ci] : '';
+        td.textContent = v;
+        td.addEventListener('input', ()=>{
+          const parsed = parseFloatOrNull(td.textContent);
+          if(parsed === null) {
+            if(s.transactions) delete s.transactions[ci];
+          } else {
+            s.transactions = s.transactions || [];
+            s.transactions[ci] = parsed;
+          }
+          tdBal.textContent = '€' + sumArray(s.transactions).toFixed(2);
+          saveDB(db);
+        });
+        tr.appendChild(td);
+      });
+
+      // double click opens student page
+      tr.addEventListener('dblclick', ()=> {
+        // open student.html?id=...
+        const url = 'student.html?id=' + encodeURIComponent(s.id) + '&c=' + encodeURIComponent(classId);
+        location.href = url;
+      });
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  function showStatusClass(m,t){
+    const el = document.getElementById('status');
+    el.textContent = m; el.classList.add('show');
+    el.style.background = t==='err' ? '#ffdede' : '#e8ffe8';
+    setTimeout(()=> el.classList.remove('show'), 2200);
+  }
+
+  // buttons
+  document.getElementById('addCol').addEventListener('click', ()=>{
+    const label = prompt('Etichetta colonna (es. Premio 01/10)') || (new Date()).toLocaleDateString();
+    const db = loadDB();
+    db.classes[classId].cols.push({id:'col'+Date.now(), label});
+    // push empty cell for each student (optional)
+    db.classes[classId].students.forEach(s => { s.transactions = s.transactions || []; s.transactions[db.classes[classId].cols.length-1] = s.transactions[db.classes[classId].cols.length-1] || null; });
+    saveDB(db); renderClass();
+  });
+
+  document.getElementById('bulkBtn').addEventListener('click', ()=>{
+    const val = parseFloat(prompt('Importo da applicare a tutti (es 1.00)')) ;
+    if(isNaN(val)) return alert('Importo non valido');
+    const label = prompt('Label per la colonna bulk', (new Date()).toLocaleDateString());
+    const db = loadDB();
+    db.classes[classId].cols.push({id:'col'+Date.now(), label: label});
+    const idx = db.classes[classId].cols.length - 1;
+    db.classes[classId].students.forEach(s => {
+      s.transactions = s.transactions || [];
+      s.transactions[idx] = val;
+    });
+    saveDB(db); renderClass();
+  });
+
+  document.getElementById('newStudent').addEventListener('click', ()=>{
+    const id = prompt('ID (es. FF:0F:2A:...)') || ('ID'+Date.now());
+    const name = prompt('Nome studente') || 'Nuovo Studente';
+    const db = loadDB();
+    db.classes[classId].students.push({id: id.trim(), name: name.trim(), transactions: []});
+    saveDB(db); renderClass();
+  });
+
+  document.getElementById('filter').addEventListener('input', (e)=>{
+    const q = e.target.value.trim().toLowerCase();
+    Array.from(document.querySelectorAll('#classBody tr')).forEach(tr=>{
+      const id = tr.cells[0].textContent.toLowerCase();
+      const name = tr.cells[1].textContent.toLowerCase();
+      tr.style.display = (!q || id.includes(q) || name.includes(q)) ? '' : 'none';
+    });
+  });
+
+  // init
+  renderClass();
+</script>
+</body>
+</html>
