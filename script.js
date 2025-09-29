@@ -103,3 +103,25 @@ async function enableNFCOpen(){
 }
 // optional auto-enable on pages
 enableNFCOpen();
+
+// === API CONFIG ===
+const API_BASE = 'https://script.google.com/macros/s/AKfycbx...../exec'; // la tua Web App URL
+const API_TOKEN = 'CHANGE_ME_OPTIONAL'; // se usi SHARED_TOKEN nel backend
+
+async function apiGet(params) {
+  const url = new URL(API_BASE);
+  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+  if (API_TOKEN) url.searchParams.set('token', API_TOKEN);
+  const r = await fetch(url.toString(), { method: 'GET' });
+  return r.json();
+}
+
+async function apiPost(payload) {
+  const body = API_TOKEN ? {...payload, token: API_TOKEN} : payload;
+  const r = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify(body)
+  });
+  return r.json();
+}
