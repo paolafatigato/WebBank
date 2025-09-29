@@ -47,86 +47,57 @@
 
 <script src="script.js"></script>
 <script>
-  // open student by id param
-  const params = new URLSearchParams(window.location.search);
-  const id = params.get('id');
-  const classParam = params.get('c') || null;
+  // student page logic (API version)
+const params = new URLSearchParams(window.location.search);
+const id = params.get('id');
+const classParam = params.get('c') || '';
 
-  if(!id) {
-    alert('Nessun id fornito'); location.href='index.html';
-  } else {
-    const db = loadDB();
-    // try find in provided class first, else search all classes
-    let student = null;
-    let foundClass = null;
-    if(classParam && db.classes[classParam]) {
-      foundClass = classParam;
-      student = db.classes[classParam].students.find(s => normalizeId(s.id) === normalizeId(id));
-    }
-    if(!student) {
-      // search all classes
-      for(const k of Object.keys(db.classes)){
-        const s = db.classes[k].students.find(x => normalizeId(x.id) === normalizeId(id));
-        if(s){ student = s; foundClass = k; break; }
-      }
-    }
-    if(!student) {
-      if(confirm('Studente non trovato. Crearlo con questo ID?')){
-        const name = prompt('Nome studente') || 'Nuovo Studente';
-        // default to 1A
-        const defaultClass = '1A';
-        db.classes[defaultClass] = db.classes[defaultClass] || { cols: [], students: [] };
-        const obj = { id: id.trim(), name: name.trim(), transactions: [] };
-        db.classes[defaultClass].students.push(obj);
-        saveDB(db);
-        location.href = 'student.html?id=' + encodeURIComponent(obj.id) + '&c=' + encodeURIComponent(defaultClass);
-      } else {
-        location.href='index.html';
-      }
-    } else {
-      // render
-      document.getElementById('stuName').textContent = student.name;
-      document.getElementById('stuSubtitle').textContent = 'ID: ' + student.id + (foundClass ? ' • Classe: '+foundClass : '');
-      document.getElementById('stuBalance').textContent = '€' + sumArray(student.transactions).toFixed(2);
-      const list = document.getElementById('transList');
-      list.innerHTML = '';
-      (student.transactions || []).forEach((t, i)=>{
-        const div = document.createElement('div');
-        div.className = 'log-entry';
-        const left = document.createElement('div');
-        left.textContent = (db.classes[foundClass] && db.classes[foundClass].cols[i]) ? db.classes[foundClass].cols[i].label : ('T'+(i+1));
-        const right = document.createElement('div');
-        right.textContent = (t>0?'+':'') + t;
-        right.style.fontWeight = '600';
-        div.appendChild(left); div.appendChild(right);
-        list.appendChild(div);
-      });
-
-      document.getElementById('addTrans').addEventListener('click', ()=>{
-        const a = parseFloat(document.getElementById('amount').value);
-        const note = document.getElementById('note').value || '';
-        if(isNaN(a)) return alert('Inserisci importo valido');
-        const db2 = loadDB();
-        // add new column label and append value at the end
-        const cls = foundClass || '1A';
-        db2.classes[cls].cols.push({id:'col'+Date.now(), label: note || (new Date()).toLocaleString()});
-        const idx = db2.classes[cls].cols.length - 1;
-        db2.classes[cls].students.forEach(s=>{
-          s.transactions = s.transactions || [];
-          if(normalizeId(s.id) === normalizeId(student.id)){
-            s.transactions[idx] = a;
-          } else {
-            s.transactions[idx] = s.transactions[idx] || null;
-          }
-        });
-        saveDB(db2);
-        location.reload();
-      });
-
-      // back to class link
-      document.getElementById('backClass').href = 'class.html?c=' + encodeURIComponent(foundClass || '1A');
-    }
+async function loadStudent() {
+  // chiama API per prendere dati studente
+  const res = await apiGet({ action:'student', id, class: classParam });
+  if (!res.success) {
+    alert('Studente non trovato nel foglio Google.');
+    location.href='index.html';
+    return;
   }
+
+  const st = res.student;
+  document.getElementById('stuName').textContent = st.name;
+  document.getElementById('stuSubtitle').textContent = `ID: ${st.id} • Classe: ${st.class}`;
+  document.getElementById('stuBalance').textContent = '€' + Number(st.balance).toFixed(2);
+
+  // lista transazioni
+  const list = document.getElementById('transList');
+  list.innerHTML = '';
+  (st.transactions||[]).forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'log-entry';
+    const left = document.createElement('div'); 
+    left.textContent = t.timestamp ? new Date(t.timestamp).toLocaleString() : '';
+    const right = document.createElement('div'); 
+    right.textContent = (t.amount>0?'+':'') + t.amount + (t.note?` — ${t.note}`:'');
+    right.style.fontWeight = '600';
+    row.appendChild(left); 
+    row.appendChild(right);
+    list.appendChild(row);
+  });
+
+  // bottone aggiungi transazione
+  document.getElementById('addTrans').onclick = async () => {
+    const a = parseFloat(document.getElementById('amount').value);
+    const note = document.getElementById('note').value || '';
+    if (isNaN(a)) return alert('Inserisci importo valido');
+    const r = await apiPost({ action:'transaction', class: st.class, id: st.id, amount: a, note });
+    if (!r.success) return alert('Errore salvataggio');
+    document.getElementById('amount').value = ''; 
+    document.getElementById('note').value = '';
+    loadStudent(); // ricarica
+  };
+}
+
+loadStudent();
+
 </script>
 </body>
 </html>
+
