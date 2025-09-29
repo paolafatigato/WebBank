@@ -47,147 +47,76 @@
 
 <script src="script.js"></script>
 <script>
-  // class page logic
-  const params = new URLSearchParams(window.location.search);
-  const classId = params.get('c') || '1A';
-  document.getElementById('classTitle').textContent = classId;
+  // class page logic (API version)
+const params = new URLSearchParams(window.location.search);
+const classId = params.get('c') || '1A';
+document.getElementById('classTitle').textContent = classId;
 
-  function renderClass(){
-    const db = loadDB();
-    const cls = db.classes[classId];
-    if(!cls) {
-      showStatusClass('Classe non trovata', 'err'); return;
-    }
-    const tableHead = document.querySelector('#classTable thead tr');
-    // remove old dynamic ths after first 3
-    while(tableHead.cells.length > 3) tableHead.deleteCell(3);
-    cls.cols.forEach((col, idx)=>{
-      const th = document.createElement('th');
-      th.textContent = col.label || `C${idx+1}`;
-      th.className = 'right';
-      tableHead.appendChild(th);
-    });
+async function renderClass(){
+  const res = await apiGet({ action: 'class', class: classId });
+  if (!res.success) { showStatusClass('Errore: ' + (res.error||'API'), 'err'); return; }
 
-    const tbody = document.getElementById('classBody');
-    tbody.innerHTML = '';
-    cls.students.forEach((s, r)=>{
-      const tr = document.createElement('tr');
-      // id
-      const tdId = document.createElement('td');
-      tdId.className = 'sticky';
-      tdId.contentEditable = 'true';
-      tdId.textContent = s.id;
-      tdId.addEventListener('input', ()=> { s.id = tdId.textContent.trim(); saveDB(db); });
-      tr.appendChild(tdId);
-      // name
-// sostituisci la parte che crea tdName con questa versione
-const tdName = document.createElement('td');
-tdName.className = 'sticky';
+  const students = res.students; // [{id,name,balance}, ...]
+  const tableHead = document.querySelector('#classTable thead tr');
+  // reset a 3 colonne fisse (ID, Nome, Saldo)
+  while (tableHead.cells.length > 3) tableHead.deleteCell(3);
 
-// crea link alla pagina student.html?id=...
-const a = document.createElement('a');
-a.href = 'student.html?id=' + encodeURIComponent(s.id) + '&c=' + encodeURIComponent(classId);
-a.textContent = s.name;
-a.style.color = 'var(--accent-dark)';
-a.style.textDecoration = 'none';
-a.addEventListener('click', (ev)=>{
-  // salva eventuali modifiche prima di navigare
-  saveDB(loadDB());
+  const tbody = document.getElementById('classBody');
+  tbody.innerHTML = '';
+
+  students.forEach(s => {
+    const tr = document.createElement('tr');
+
+    const tdId = document.createElement('td');
+    tdId.className = 'sticky';
+    tdId.textContent = s.id;
+    tr.appendChild(tdId);
+
+    const tdName = document.createElement('td');
+    tdName.className = 'sticky';
+    const a = document.createElement('a');
+    a.href = 'student.html?id=' + encodeURIComponent(s.id) + '&c=' + encodeURIComponent(classId);
+    a.textContent = s.name;
+    tdName.appendChild(a);
+    tr.appendChild(tdName);
+
+    const tdBal = document.createElement('td');
+    tdBal.className = 'right sticky';
+    tdBal.textContent = '€' + (Number(s.balance||0)).toFixed(2);
+    tr.appendChild(tdBal);
+
+    tbody.appendChild(tr);
+  });
+}
+renderClass();
+
+// Bulk add (collettivo)
+document.getElementById('bulkBtn').addEventListener('click', async ()=>{
+  const res = await apiGet({ action:'class', class: classId });
+  if(!res.success) return alert('Errore caricando classe');
+  const amount = parseFloat(prompt('Importo per tutti (+/-):', '1.00'));
+  if (isNaN(amount)) return;
+  const note = prompt('Motivazione (facoltativa):', '');
+  const ids = res.students.map(s => s.id);
+  const r2 = await apiPost({ action:'bulk', class: classId, ids, amount, note });
+  if(!r2.success) return alert('Errore bulk: ' + (r2.error||''));
+  alert('Aggiunti ' + r2.added + ' movimenti');
+  renderClass(); // ricarica bilanci
 });
-tdName.appendChild(a);
 
-// rendi comunque modificabile il nome (se preferisci edit inline): doppio click sul link apre la pagina
-// se vuoi modificare inline invece del link, puoi lasciare contentEditable o aggiungere un pulsante di modifica
+// (opzionale) Nuovo studente: qui servirebbe una API "add student"; per ora gestisci Students manualmente nel foglio
+document.getElementById('newStudent').addEventListener('click', ()=>{
+  alert('Per ora aggiungi gli studenti nella scheda "Students" del Google Sheet.');
+});
 
-tr.appendChild(tdName);
+function showStatusClass(m,t){
+  const el = document.getElementById('status');
+  el.textContent = m; el.classList.add('show');
+  el.style.background = t==='err' ? '#ffdede' : '#e8ffe8';
+  setTimeout(()=> el.classList.remove('show'), 2200);
+}
 
-      // balance
-      const tdBal = document.createElement('td');
-      tdBal.className = 'right sticky';
-      tdBal.textContent = '€' + sumArray(s.transactions).toFixed(2);
-      tr.appendChild(tdBal);
-
-      // transaction cells
-      cls.cols.forEach((col, ci)=>{
-        const td = document.createElement('td');
-        td.contentEditable = 'true';
-        const v = s.transactions && s.transactions[ci] !== undefined ? s.transactions[ci] : '';
-        td.textContent = v;
-        td.addEventListener('input', ()=>{
-          const parsed = parseFloatOrNull(td.textContent);
-          if(parsed === null) {
-            if(s.transactions) delete s.transactions[ci];
-          } else {
-            s.transactions = s.transactions || [];
-            s.transactions[ci] = parsed;
-          }
-          tdBal.textContent = '€' + sumArray(s.transactions).toFixed(2);
-          saveDB(db);
-        });
-        tr.appendChild(td);
-      });
-
-      // double click opens student page
-      tr.addEventListener('dblclick', ()=> {
-        // open student.html?id=...
-        const url = 'student.html?id=' + encodeURIComponent(s.id) + '&c=' + encodeURIComponent(classId);
-        location.href = url;
-      });
-
-      tbody.appendChild(tr);
-    });
-  }
-
-  function showStatusClass(m,t){
-    const el = document.getElementById('status');
-    el.textContent = m; el.classList.add('show');
-    el.style.background = t==='err' ? '#ffdede' : '#e8ffe8';
-    setTimeout(()=> el.classList.remove('show'), 2200);
-  }
-
-  // buttons
-  document.getElementById('addCol').addEventListener('click', ()=>{
-    const label = prompt('Etichetta colonna (es. Premio 01/10)') || (new Date()).toLocaleDateString();
-    const db = loadDB();
-    db.classes[classId].cols.push({id:'col'+Date.now(), label});
-    // push empty cell for each student (optional)
-    db.classes[classId].students.forEach(s => { s.transactions = s.transactions || []; s.transactions[db.classes[classId].cols.length-1] = s.transactions[db.classes[classId].cols.length-1] || null; });
-    saveDB(db); renderClass();
-  });
-
-  document.getElementById('bulkBtn').addEventListener('click', ()=>{
-    const val = parseFloat(prompt('Importo da applicare a tutti (es 1.00)')) ;
-    if(isNaN(val)) return alert('Importo non valido');
-    const label = prompt('Label per la colonna bulk', (new Date()).toLocaleDateString());
-    const db = loadDB();
-    db.classes[classId].cols.push({id:'col'+Date.now(), label: label});
-    const idx = db.classes[classId].cols.length - 1;
-    db.classes[classId].students.forEach(s => {
-      s.transactions = s.transactions || [];
-      s.transactions[idx] = val;
-    });
-    saveDB(db); renderClass();
-  });
-
-  document.getElementById('newStudent').addEventListener('click', ()=>{
-    const id = prompt('ID (es. FF:0F:2A:...)') || ('ID'+Date.now());
-    const name = prompt('Nome studente') || 'Nuovo Studente';
-    const db = loadDB();
-    db.classes[classId].students.push({id: id.trim(), name: name.trim(), transactions: []});
-    saveDB(db); renderClass();
-  });
-
-  document.getElementById('filter').addEventListener('input', (e)=>{
-    const q = e.target.value.trim().toLowerCase();
-    Array.from(document.querySelectorAll('#classBody tr')).forEach(tr=>{
-      const id = tr.cells[0].textContent.toLowerCase();
-      const name = tr.cells[1].textContent.toLowerCase();
-      tr.style.display = (!q || id.includes(q) || name.includes(q)) ? '' : 'none';
-    });
-  });
-
-  // init
-  renderClass();
 </script>
 </body>
 </html>
+
